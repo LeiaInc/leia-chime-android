@@ -84,7 +84,6 @@ open class TextureRenderView @JvmOverloads constructor(
 
     override fun release() {
         logger.info(TAG, "Releasing render view")
-        renderer.releaseEglSurface()
         renderer.release()
     }
 
