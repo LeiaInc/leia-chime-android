@@ -121,7 +121,7 @@ class HomeActivity : AppCompatActivity() {
     }
 
     private fun getTestUrl(): String {
-        val endpointUrl = debugSettingsViewModel.endpointUrl.value
+        val endpointUrl = "https://u9sdzqxw72.execute-api.us-west-2.amazonaws.com/Prod/"
         return if (endpointUrl.isNullOrEmpty()) getString(R.string.test_url) else endpointUrl
     }
 

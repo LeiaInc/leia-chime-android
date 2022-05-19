@@ -14,6 +14,18 @@ buildscript {
         maven { url "https://plugins.gradle.org/m2/" }
         google()
         jcenter()
+
+
+        // Serves Leia artifacts, and acts as a caching proxy for Jcenter and Google's Maven servers.
+        maven {
+            url 'https://leiainc.jfrog.io/leiainc/gradle-dev'
+
+            // Please don't share these credentials outside of Leia partners.
+            credentials {
+                username "leiaprivate"
+                password "102852a"
+            }
+        }
     }
 
     dependencies {
@@ -48,10 +60,21 @@ allprojects {
         flatDir {
             dirs '../amazon-chime-sdk/libs'
         }
+
+        // Serves Leia artifacts, and acts as a caching proxy for Jcenter and Google's Maven servers.
+        maven {
+            url 'https://leiainc.jfrog.io/leiainc/gradle-dev'
+
+            // Please don't share these credentials outside of Leia partners.
+            credentials {
+                username "leiaprivate"
+                password "102852a"
+            }
+        }
     }
     project.ext {
         chimeBuildToolsVersion = "29.0.2"
-        chimeMinSdkVersion = 21
+        chimeMinSdkVersion = 28
         chimeTargetSdkVersion = 30
         chimeCompileSdkVersion = 30
         sdkDir = localProperties.getProperty('sdk.dir')

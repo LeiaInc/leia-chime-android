@@ -29,6 +29,14 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+    packagingOptions {
+        pickFirst 'lib/x86/libc++_shared.so'
+        pickFirst 'lib/x86_64/libc++_shared.so'
+        pickFirst 'lib/armeabi-v7a/libc++_shared.so'
+        pickFirst 'lib/arm64-v8a/libc++_shared.so'
+        doNotStrip "*/armeabi-v7a/libsnpe_*.so"
+        doNotStrip "*/arm64-v8a/libsnpe_*.so"
+    }
 }
 
 dependencies {
@@ -46,4 +54,6 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.3.3'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.3.3'
     implementation 'com.android.support.constraint:constraint-layout:1.3.3'
+
+    implementation 'com.leiainc:androidmediasdk:0.0.12-9v5'
 }
