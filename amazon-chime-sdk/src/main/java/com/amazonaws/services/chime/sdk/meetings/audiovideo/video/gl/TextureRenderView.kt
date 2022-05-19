@@ -43,13 +43,9 @@ open class TextureRenderView @JvmOverloads constructor(
     // (Required for View implementations) which determines the actual size of the view
     private val videoLayoutMeasure: VideoLayoutMeasure = VideoLayoutMeasure()
 
-    private val renderer by lazy {
-        // Lazy so we can allow builders to set their own loggers
-        DefaultEglRenderer(logger)
-    }
-
     // Public so it can be set, since most users will not be using constructor directly
     var logger: Logger = ConsoleLogger()
+    open var renderer = DefaultEglRenderer(logger)
 
     private val TAG = "TextureRenderView"
 
@@ -82,11 +78,13 @@ open class TextureRenderView @JvmOverloads constructor(
         rotatedFrameHeight = 0
 
         logger.info(TAG, "Initializing render view")
+        renderer = DefaultEglRenderer(logger)
         renderer.init(eglCoreFactory)
     }
 
     override fun release() {
         logger.info(TAG, "Releasing render view")
+        renderer.releaseEglSurface()
         renderer.release()
     }
 
