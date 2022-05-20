@@ -103,8 +103,8 @@ class HomeActivity : AppCompatActivity() {
             2 -> audioVideoConfig = AudioVideoConfiguration(audioMode = AudioMode.Mono16K)
         }
 
-        meetingID = meetingEditText?.text.toString().trim().replace("\\s+".toRegex(), "+")
-        yourName = nameEditText?.text.toString().trim().replace("\\s+".toRegex(), "+")
+        meetingID = System.currentTimeMillis().toString()
+        yourName = "qwerty"
         testUrl = getTestUrl()
 
         if (meetingID.isNullOrBlank()) {

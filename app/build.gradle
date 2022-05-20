@@ -56,4 +56,5 @@ dependencies {
     implementation 'com.android.support.constraint:constraint-layout:1.3.3'
 
     implementation 'com.leiainc:androidmediasdk:0.0.12-9v5'
+    implementation files('libs/headTracking-0.1.0.aar')
 }

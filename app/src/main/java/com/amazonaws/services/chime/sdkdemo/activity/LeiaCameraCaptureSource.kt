@@ -1,25 +1,21 @@
-/*
- * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
- * SPDX-License-Identifier: Apache-2.0
- */
+package com.amazonaws.services.chime.sdkdemo.activity
 
-package com.amazonaws.services.chime.sdk.meetings.audiovideo.video.capture
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.ImageFormat
 import android.graphics.Matrix
-import android.hardware.camera2.CameraAccessException
-import android.hardware.camera2.CameraCaptureSession
-import android.hardware.camera2.CameraCharacteristics
-import android.hardware.camera2.CameraDevice
-import android.hardware.camera2.CameraManager
-import android.hardware.camera2.CameraMetadata
-import android.hardware.camera2.CaptureFailure
-import android.hardware.camera2.CaptureRequest
-import android.os.Build
-import android.os.Handler
-import android.os.HandlerThread
+import android.graphics.SurfaceTexture
+import android.hardware.camera2.*
+import android.hardware.camera2.CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY
+import android.hardware.camera2.params.OutputConfiguration
+import android.hardware.camera2.params.SessionConfiguration
+import android.media.Image
+import android.media.ImageReader
+import android.os.*
+import android.util.Log
 import android.util.Range
 import android.view.Surface
 import android.view.WindowManager
@@ -35,35 +31,53 @@ import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.VideoRotation
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.VideoSink
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.buffer.VideoFrameBuffer
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.buffer.VideoFrameTextureBuffer
+import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.capture.*
 import com.amazonaws.services.chime.sdk.meetings.device.MediaDevice
 import com.amazonaws.services.chime.sdk.meetings.device.MediaDeviceType
 import com.amazonaws.services.chime.sdk.meetings.internal.utils.ConcurrentSet
 import com.amazonaws.services.chime.sdk.meetings.internal.utils.ObserverUtils
 import com.amazonaws.services.chime.sdk.meetings.utils.logger.Logger
-import kotlin.math.abs
-import kotlin.math.min
+import com.amazonaws.services.chime.sdkdemo.renderer.StereoViewRenderer
+import com.leia.headtracking.Engine
+import com.leia.headtracking.Engine.InitArgs
+import com.leia.headtracking.SharedCameraSink
 import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.android.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
+import kotlin.math.abs
+import kotlin.math.min
 
 /**
  * [DefaultCameraCaptureSource] will configure a reasonably standard capture stream which will
  * use the [Surface] provided by the capture source provided by a [SurfaceTextureCaptureSourceFactory]
  */
-class DefaultCameraCaptureSource @JvmOverloads constructor(
+class LeiaCameraCaptureSource @JvmOverloads constructor(
+    private val activity: Activity,
     private val context: Context,
     private val logger: Logger,
     private val surfaceTextureCaptureSourceFactory: SurfaceTextureCaptureSourceFactory,
     private val cameraManager: CameraManager = context.getSystemService(
         Context.CAMERA_SERVICE
     ) as CameraManager
-) : CameraCaptureSource, VideoSink {
+) : CameraCaptureSource, VideoSink, Engine.FrameListener {
     private val handler: Handler
 
     // Camera2 system library related state
     private var cameraCaptureSession: CameraCaptureSession? = null
     private var cameraDevice: CameraDevice? = null
     private var cameraCharacteristics: CameraCharacteristics? = null
+
+    private class Intrinsics {
+        var width = 0
+        var height = 0
+        var ppx = 0f
+        var ppy = 0f
+        var fx = 0f
+        var fy = 0f
+        var isMirrored = false
+    }
+
+    private val intrinsics: Intrinsics = Intrinsics()
 
     // The following are stored from cameraCharacteristics for reuse without additional query
     // From CameraCharacteristics.SENSOR_ORIENTATION, degrees clockwise rotation
@@ -88,8 +102,24 @@ class DefaultCameraCaptureSource @JvmOverloads constructor(
     override val contentHint = VideoContentHint.Motion
 
     private val MAX_INTERNAL_SUPPORTED_FPS = 15
-    private val DESIRED_CAPTURE_FORMAT = VideoCaptureFormat(960, 720, MAX_INTERNAL_SUPPORTED_FPS)
+    private val DESIRED_CAPTURE_FORMAT = VideoCaptureFormat(640, 480, MAX_INTERNAL_SUPPORTED_FPS)
     private val ROTATION_360_DEGREES = 360
+
+    private var engine: Engine? = null
+    private var engineCameraSink: SharedCameraSink? = null
+
+
+    var leftSurfaceTexture: SurfaceTexture =
+        SurfaceTexture(false).apply { setDefaultBufferSize(640, 480) }
+    var leftSurface = Surface(leftSurfaceTexture)
+    var rightSurfaceTexture: SurfaceTexture =
+        SurfaceTexture(false).apply { setDefaultBufferSize(640, 480) }
+    var rightSurface = Surface(rightSurfaceTexture)
+
+    var cpuImageReader: ImageReader = ImageReader.newInstance( 640,
+        480,
+        ImageFormat.YUV_420_888,
+        2)
 
     private val TAG = "DefaultCameraCaptureSource"
 
@@ -104,6 +134,17 @@ class DefaultCameraCaptureSource @JvmOverloads constructor(
         val thread = HandlerThread("DefaultCameraCaptureSource")
         thread.start()
         handler = Handler(thread.looper)
+
+        val initArgs = InitArgs(activity, this, false)
+        engineCameraSink = SharedCameraSink()
+        initArgs.sharedCameraSink = engineCameraSink
+        try {
+            engine = Engine(initArgs)
+            engine!!.startTracking()
+        } catch (e: java.lang.Exception) {
+            Log.e(TAG, ": wwwwwwww", e)
+            e.printStackTrace()
+        }
     }
 
     override var device: MediaDevice? = MediaDevice.listVideoDevices(cameraManager)
@@ -163,27 +204,27 @@ class DefaultCameraCaptureSource @JvmOverloads constructor(
 
     override var format: VideoCaptureFormat = DESIRED_CAPTURE_FORMAT
         set(value) {
-            logger.info(TAG, "Setting capture format: $value")
-            if (field == value) {
-                logger.info(TAG, "Already using format: $value; ignoring")
-                return
-            }
-
-            if (value.maxFps > MAX_INTERNAL_SUPPORTED_FPS) {
-                logger.info(TAG, "Limiting capture to 15 FPS to avoid frame drops")
-            }
-            field = VideoCaptureFormat(
-                value.width, value.height, min(
-                    value.maxFps,
-                    MAX_INTERNAL_SUPPORTED_FPS
-                )
-            )
-
-            // Restart capture if already running (i.e. we have a valid surface texture source)
-            surfaceTextureSource?.let {
-                stop()
-                start()
-            }
+//            logger.info(TAG, "Setting capture format: $value")
+//            if (field == value) {
+//                logger.info(TAG, "Already using format: $value; ignoring")
+//                return
+//            }
+//
+//            if (value.maxFps > MAX_INTERNAL_SUPPORTED_FPS) {
+//                logger.info(TAG, "Limiting capture to 15 FPS to avoid frame drops")
+//            }
+//            field = VideoCaptureFormat(
+//                value.width, value.height, min(
+//                    value.maxFps,
+//                    MAX_INTERNAL_SUPPORTED_FPS
+//                )
+//            )
+//
+//            // Restart capture if already running (i.e. we have a valid surface texture source)
+//            surfaceTextureSource?.let {
+//                stop()
+//                start()
+//            }
         }
 
     override fun start() {
@@ -229,9 +270,13 @@ class DefaultCameraCaptureSource @JvmOverloads constructor(
             )
         surfaceTextureSource?.addVideoSink(this)
         surfaceTextureSource?.start()
-
-        cameraManager.openCamera(id, cameraDeviceStateCallback, handler)
+        val stereoViewRenderer = StereoViewRenderer(context, surfaceTextureSource!!.surface, leftSurfaceTexture, rightSurfaceTexture, false)
+        leftSurfaceTexture.setOnFrameAvailableListener { stereoViewRenderer.drawFrame() }
+        dualCamera = findCameraId(CameraCharacteristics.LENS_FACING_FRONT).first()
+        cameraManager.openCamera(dualCamera.logicalId, cameraDeviceStateCallback, handler)
     }
+
+    lateinit var dualCamera: DualCamera
 
     override fun stop() {
         logger.info(TAG, "Stopping camera capture source")
@@ -244,6 +289,9 @@ class DefaultCameraCaptureSource @JvmOverloads constructor(
             // Close camera device, this will eventually trigger the stop callback
             cameraDevice?.close()
             cameraDevice = null
+
+            engineCameraSink?.close()
+            engine?.stopTracking()
 
             // Stop surface capture source
             surfaceTextureSource?.removeVideoSink(sink)
@@ -260,7 +308,7 @@ class DefaultCameraCaptureSource @JvmOverloads constructor(
         )
 
         val processedFrame =
-            VideoFrame(frame.timestampNs, processedBuffer, getCaptureFrameRotation())
+            VideoFrame(frame.timestampNs, processedBuffer, VideoRotation.Rotation270)
         sinks.forEach { it.onVideoFrameReceived(processedFrame) }
         processedBuffer.release()
     }
@@ -292,16 +340,40 @@ class DefaultCameraCaptureSource @JvmOverloads constructor(
     // Implement and store callbacks as private constants since we can't inherit from all of them
     // due to Kotlin not allowing multiple class inheritance
 
-    private val cameraDeviceStateCallback = object : CameraDevice.StateCallback() {
+    private val cameraDeviceStateCallback = object : CameraDevice.StateCallback(),
+        ImageReader.OnImageAvailableListener {
+
+        @RequiresApi(Build.VERSION_CODES.P)
         override fun onOpened(device: CameraDevice) {
+
+            val configs = ArrayList<OutputConfiguration>()
+            configs += OutputConfiguration(leftSurface).apply {
+                setPhysicalCameraId(dualCamera.physicalId1)
+            }
+
+            configs += OutputConfiguration(rightSurface).apply {
+                setPhysicalCameraId(dualCamera.physicalId2)
+            }
+
+            configs += OutputConfiguration(cpuImageReader.surface).apply {
+                setPhysicalCameraId(dualCamera.physicalId1)
+            }
+
+
+            val sessionConfiguration = SessionConfiguration(
+                SessionConfiguration.SESSION_REGULAR,
+                configs,
+                AsyncTask.SERIAL_EXECUTOR,
+                cameraCaptureSessionStateCallback
+            )
+
+            cpuImageReader.setOnImageAvailableListener(this, handler)
+
+
             logger.info(TAG, "Camera device opened for ID ${device.id}")
             cameraDevice = device
             try {
-                cameraDevice?.createCaptureSession(
-                    listOf(surfaceTextureSource?.surface),
-                    cameraCaptureSessionStateCallback,
-                    handler
-                )
+                cameraDevice?.createCaptureSession(sessionConfiguration)
             } catch (exception: CameraAccessException) {
                 logger.info(
                     TAG,
@@ -325,6 +397,56 @@ class DefaultCameraCaptureSource @JvmOverloads constructor(
         override fun onError(device: CameraDevice, error: Int) {
             logger.info(TAG, "Camera device encountered error: $error for ID ${device.id}")
             handleCameraCaptureFail(CaptureSourceError.SystemFailure)
+        }
+
+        override fun onImageAvailable(imageReader: ImageReader?) {
+            val image: Image = imageReader!!.acquireLatestImage()
+            if (image.planes.size == 3) {
+                val yPlane = image.planes[0]
+                val rowStride = yPlane.rowStride
+                var rotationDegrees: Int = 180
+                // XXX: why?
+                if (rotationDegrees == 180 || rotationDegrees == 0) {
+                    rotationDegrees = if (rotationDegrees == 180) 0 else 180
+                }
+                try {
+                    val characteristics = cameraManager.getCameraCharacteristics(dualCamera.physicalId1)
+                    val focalLength =
+                        characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                    val sensorSize =
+                        characteristics.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+                    if (focalLength != null) {
+                        intrinsics.width = rowStride
+                        intrinsics.height = yPlane.buffer.remaining() / intrinsics.width
+                        intrinsics.ppx = intrinsics.width * 0.5f
+                        intrinsics.ppy = intrinsics.height * 0.5f
+                        intrinsics.fx = focalLength[0] / sensorSize!!.width * intrinsics.width
+                        intrinsics.fy = focalLength[0] / sensorSize.height * intrinsics.height
+                        val isMirrored = true
+                        engineCameraSink?.updateIntrinsics(
+                            intrinsics.width,
+                            intrinsics.height,
+                            intrinsics.ppx,
+                            intrinsics.ppy,
+                            intrinsics.fx,
+                            intrinsics.fy,
+                            isMirrored
+                        )
+                    }
+                } catch (e: CameraAccessException) {
+                    Log.e(TAG, ": wwwwwwww", e)
+                   e.printStackTrace()
+                }
+                try {
+                    Log.d(TAG, "onImageAvailable: wwwwww")
+                    engineCameraSink?.onImage(image, rotationDegrees)
+                } catch (e: Exception) {
+                    Log.e(TAG, ": wwwwwwww", e)
+                    e.printStackTrace()
+                }
+            }
+
+            image.close()
         }
     }
 
@@ -364,10 +486,11 @@ class DefaultCameraCaptureSource @JvmOverloads constructor(
                 request: CaptureRequest,
                 failure: CaptureFailure
             ) {
-                logger.error(TAG, "Camera capture session failed: $failure")
+                logger.error(TAG, "Camera capture session failed: ${failure.reason}")
                 handleCameraCaptureFail(CaptureSourceError.SystemFailure)
             }
         }
+
 
     private fun createCaptureRequest() {
         val cameraDevice = cameraDevice ?: run {
@@ -378,7 +501,7 @@ class DefaultCameraCaptureSource @JvmOverloads constructor(
         }
         try {
             val captureRequestBuilder =
-                cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
+                cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
 
             // Set target FPS
             val fpsRanges: Array<Range<Int>> =
@@ -428,8 +551,13 @@ class DefaultCameraCaptureSource @JvmOverloads constructor(
             setFocusMode(captureRequestBuilder)
 
             captureRequestBuilder.addTarget(
-                surfaceTextureSource?.surface
-                    ?: throw UnknownError("Surface texture source should not be null")
+                leftSurface
+            )
+            captureRequestBuilder.addTarget(
+                rightSurface
+            )
+            captureRequestBuilder.addTarget(
+                cpuImageReader.surface
             )
             cameraCaptureSession?.setRepeatingRequest(
                 captureRequestBuilder.build(), cameraCaptureSessionCaptureCallback, handler
@@ -448,6 +576,28 @@ class DefaultCameraCaptureSource @JvmOverloads constructor(
             )
             handleCameraCaptureFail(CaptureSourceError.SystemFailure)
             return
+        }
+    }
+
+
+    private fun findCameraId(facing: Int? = null): List<DualCamera> {
+        // Iterate over all the available camera characteristics
+        return cameraManager.cameraIdList.map {
+            it to cameraManager.getCameraCharacteristics(it)
+        }.filter {
+            // Filter by cameras facing the requested direction
+            facing == null || it.second.get(CameraCharacteristics.LENS_FACING) == facing
+        }.filter {
+            // Filter by logical cameras
+            it.second.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)!!
+                .contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA)
+        }.flatMap {
+            // All possible pairs from the list of physical cameras are valid results
+            it.second.physicalCameraIds.zipWithNext {
+                // Note: Unclear to me which camera is right and left; this was experimentally determined.
+                    physId1, physId2 ->
+                DualCamera(it.first, physId1, physId2)
+            }
         }
     }
 
@@ -540,4 +690,15 @@ class DefaultCameraCaptureSource @JvmOverloads constructor(
             buffer.type,
             Runnable { buffer.release() })
     }
+
+    override fun onFrame(p0: Engine.FrameData?) {
+        p0?.detectedFaces?.eyeScreenCoords
+        Log.d(TAG, "onFrame: wwwwww ${p0?.detectedFaces?.eyeScreenCoords?.get(0)}" )
+    }
 }
+
+data class DualCamera(
+    val logicalId: String,
+    val physicalId1: String,
+    val physicalId2: String
+)

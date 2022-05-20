@@ -96,7 +96,7 @@ class MeetingActivity : AppCompatActivity(),
             }
 
             val surfaceTextureCaptureSourceFactory = DefaultSurfaceTextureCaptureSourceFactory(logger, meetingSessionModel.eglCoreFactory)
-            meetingSessionModel.cameraCaptureSource = DefaultCameraCaptureSource(applicationContext, logger, surfaceTextureCaptureSourceFactory).apply {
+            meetingSessionModel.cameraCaptureSource = LeiaCameraCaptureSource(this, applicationContext, logger, surfaceTextureCaptureSourceFactory).apply {
                 eventAnalyticsController = meetingSession?.eventAnalyticsController
             }
             meetingSessionModel.cpuVideoProcessor = CpuVideoProcessor(logger, meetingSessionModel.eglCoreFactory)
