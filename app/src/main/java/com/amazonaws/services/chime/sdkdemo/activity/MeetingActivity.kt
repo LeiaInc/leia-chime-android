@@ -5,7 +5,9 @@
 
 package com.amazonaws.services.chime.sdkdemo.activity
 
+import android.graphics.SurfaceTexture
 import android.os.Bundle
+import android.view.Surface
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.ViewModelProvider
@@ -13,7 +15,6 @@ import com.amazonaws.services.chime.sdk.meetings.audiovideo.AudioVideoConfigurat
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.AudioVideoFacade
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.audio.AudioMode
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.capture.CameraCaptureSource
-import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.capture.DefaultCameraCaptureSource
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.capture.DefaultSurfaceTextureCaptureSourceFactory
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.gl.EglCoreFactory
 import com.amazonaws.services.chime.sdk.meetings.device.MediaDevice
@@ -96,9 +97,8 @@ class MeetingActivity : AppCompatActivity(),
             }
 
             val surfaceTextureCaptureSourceFactory = DefaultSurfaceTextureCaptureSourceFactory(logger, meetingSessionModel.eglCoreFactory)
-            meetingSessionModel.cameraCaptureSource = LeiaCameraCaptureSource(this, applicationContext, logger, surfaceTextureCaptureSourceFactory).apply {
-                eventAnalyticsController = meetingSession?.eventAnalyticsController
-            }
+            meetingSessionModel.cameraCaptureSource = LeiaCameraCaptureSource(this, applicationContext, mutableListOf(), mutableListOf(), surfaceTextureCaptureSourceFactory)
+
             meetingSessionModel.cpuVideoProcessor = CpuVideoProcessor(logger, meetingSessionModel.eglCoreFactory)
             meetingSessionModel.gpuVideoProcessor = GpuVideoProcessor(logger, meetingSessionModel.eglCoreFactory)
 
@@ -109,7 +109,6 @@ class MeetingActivity : AppCompatActivity(),
                 .commit()
         }
     }
-
     override fun onJoinMeetingClicked() {
         val rosterViewFragment = MeetingFragment.newInstance(meetingId, audioVideoConfig, meetingEndpointUrl)
         supportFragmentManager
